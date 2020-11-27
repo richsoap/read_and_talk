@@ -12,6 +12,7 @@ import asyncio
 import socket
 
 packetLength = 491
+packetPrefix = 100
 hostname = "127.0.0.1"
 duration = 1
 username = "南海渔船"
@@ -22,14 +23,33 @@ class SendEmitter(flx.Component):
         self.refresh()
     
     @flx.emitter
-    def check_auto(self):
+    def send_packet(self):
         return dict()
 
     def refresh(self):
-        self.check_auto()
+        self.send_packet()
         asyncio.get_event_loop().call_later(duration, self.refresh)
         
 emitter = SendEmitter()
+
+headPacket = bytearray(packetLength)
+for i in range(packetLength):
+    if i < packetPrefix:
+        headPacket[i] = 0
+    else:
+        headPacket[i] = 0x0f
+
+dataPacket = bytearray(packetLength)
+for i in range(packetLength):
+    dataPacket[i] = 0xff
+
+tailPacket = bytearray(packetLength)
+for i in range(packetLength):
+    if i < packetPrefix:
+        tailPacket[i] = 0
+    else:
+        tailPacket[i] = 0xff
+
 
 class Sender(flx.PyWidget):
     """ This represents one connection to the chat room.
@@ -54,65 +74,66 @@ class Sender(flx.PyWidget):
                     self.port = flx.LineEdit(placeholder_text="0", flex=2)
                 with flx.HBox():
                     flx.Label(text="测试帧数", flex=1)
-                    self.frameSize = flx.LineEdit(placeholder_text="20000", flex=2)
+                    self.frameNum = flx.LineEdit(placeholder_text="20000", flex=2)
                 with flx.HBox():
                     flx.Label(text="测试模式", flex=1)
                     self.mode = flx.LineEdit(placeholder_text="测试模式", flex=2)
                 with flx.HBox():
-                    self.button = flx.Button(text="开始")
+                    self.startButton = flx.Button(text="开始")
                 flx.Widget(flex=1)
             flx.Widget(flex=1)
-        self.resendIndex = 0
+        self.headCount = 0
+        self.tailCount = 0
+        self.dataCount = 0
+        self.socket = None 
 
-    @flx.reaction('ok.pointer_down', 'msg_edit.submit')
-    def _send_message(self, *events):
-        text = self.msg_edit.text
-        if text:
-            result = self.send_message(text, username, self.ip.text, self.port.text)
-            if result == "ok":
-                self.msg_edit.set_text('')
-                self.messages.add_message("{} {}:{}".format(datetime.datetime.now().strftime("%y/%m/%d %H:%M:%S"), self.ip.text, self.port.text))
-                self.messages.add_message(text)
+    @flx.reaction('startButton.pointer_down')
+    def change_state(self, *events):
+        if self.startButton.text == "停止中...":
+            return
+        if self.startButton.text == "开始":
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.startButton.set_text("提前结束")
+        else:
+            self.startButton.set_text("停止中...")
+            def getReady():
+                self.tailCount = 0
+                self.headCount = 0
+                self.dataCount = 0
+                self.startButton.set_text("开始")
+            asyncio.get_event_loop().call_later(3, getReady)
+    
+    @emitter.reaction("send_packet")
+    def send_packet(self, *events):
+        if self.startButton.text == "开始" or self.socket is None:
+            pass
+        elif self.startButton.text == "提前结束":
+            if self.headCount < 3:
+                self.send_head()
+                self.headCount += 1
             else:
-                self.messages.add_message("{} {}:{}".format(datetime.datetime.now().strftime("%y/%m/%d %H:%M:%S"), self.ip.text, self.port.text))
-                self.messages.add_message(result)
-    
-    def _try_send_message(self):
-        if self.resendIndex >= len(resendText):
-            self.resendIndex = 0
-        text = resendText[self.resendIndex]
-        if len(text) > 0:
-            self.send_message(text, username, self.ip.text, self.port.text)
-            self.messages.add_message("{} {}:{}".format(datetime.datetime.now().strftime("%y/%m/%d %H:%M:%S"), self.ip.text, self.port.text))
-            self.messages.add_message(text)
-        self.resendIndex += 1
-    
-    @flx.reaction("autosend.pointer_down")
-    def _change_auto_mode(self, *events):
-        if self.autosend.text == "自动发送已关闭":
-            self.autosend.set_text("自动发送已打开")
+                self.dataCount += 1
+                self.send_data()
+                if self.dataCount >= int(self.frameNum.text):
+                    self.change_state()
         else:
-            self.autosend.set_text("自动发送已关闭")
+            if self.tailCount < 3:
+                self.send_tail()
+                self.tailCount += 1
     
-    def send_message(self, msg, name, ip, port):
-        msg = "{}:{}".format(name, msg)
-        if len(msg) > packetLength:
-            msg = msg[:packetLength]
-        else:
-            msg = msg + ' '*(packetLength-len(msg))
-        socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(msg.encode(), (ip, int(port)))
-        print("result: socket done")
-        return "ok" 
+    def send_head(self):
+        # TODO add information in head
+        self.socket.sendto(headPacket, (self.ip.text, int(self.port.text)))
     
-    @emitter.reaction("check_auto")
-    def _auto_send(self, *events):
-        if self.autosend.text == "自动发送已打开":
-            self._try_send_message()
+    def send_data(self):
+        self.socket.sendto(dataPacket, (self.ip.text, int(self.port.text)))
     
-
+    def send_tail(self):
+        self.socket.sendto(tailPacket, (self.ip.text, int(self.port.text)))
+    
 if __name__ == '__main__':
-    # flx.App(SenderRoom, title="短消息测试发送端").launch("app")
-    # flx.run()
-    flx.config.hostname = "162.105.85.184"
-    flx.App(SenderRoom).server()
-    flx.start()
+    flx.App(Sender, title="误码率测试发送端").launch("app")
+    flx.run()
+    # flx.config.hostname = "162.105.85.184"
+    # flx.App(SenderRoom).server()
+    # flx.start()
