@@ -44,6 +44,7 @@ func (m *manager) work() {
 	for {
 		select {
 		case ebr := <-m.errbitInfo:
+			log.Printf("ebr update start: %v", ebr)
 			for i := range m.errbitJudge {
 				m.errbitJudge[i] = float64(combin.Binomial(bits, i)) * math.Pow(ebr, float64(i)) * math.Pow(1-ebr, float64(bits-i))
 				if i != 0 {
@@ -51,11 +52,14 @@ func (m *manager) work() {
 				}
 			}
 			m.errbitJudge[len(m.errbitJudge)-1] = 1
+			log.Printf("ebr update ended")
 		case fb := <-m.dataInfo:
+			log.Printf("new data")
 			dice := rand.Float64()
 			for i := range m.errbitJudge {
 				if dice < m.errbitJudge[i] {
 					fb <- (1 << i) - 1
+					log.Printf("error bits %v", i)
 					break
 				}
 			}
@@ -68,14 +72,17 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	log.Printf("read ebr info from %v", ebrbind)
 	recv, err := net.ListenPacket("udp", databind)
 	if err != nil {
 		log.Fatal(err)
 	}
+	log.Printf("read data info from %v", databind)
 	send, err := net.Dial("udp", dest)
 	if err != nil {
 		log.Fatal(err)
 	}
+	log.Printf("send data to %v", dest)
 	m := newManager()
 	go m.work()
 	buf := make([]byte, 1024, 1024)
@@ -85,12 +92,14 @@ func main() {
 	}
 	generate := func() {
 		fb := make(chan byte)
+		defer close(fb)
 		for {
-			_, _, err := recv.ReadFrom(buf)
+			len, _, err := recv.ReadFrom(buf)
 			if err != nil {
 				log.Print(err)
 				continue
 			}
+			log.Printf("read data length %v", len)
 			m.dataInfo <- fb
 			mask := <-fb
 			sendBuf[0] = 0xff ^ mask
