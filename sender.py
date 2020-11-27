@@ -14,7 +14,7 @@ import socket
 packetLength = 491
 packetPrefix = 100
 hostname = "127.0.0.1"
-duration = 1
+duration = 0.1
 username = "南海渔船"
 
 class SendEmitter(flx.Component):
@@ -111,11 +111,16 @@ class Sender(flx.PyWidget):
             if self.headCount < 3:
                 self.send_head()
                 self.headCount += 1
-            else:
+            elif self.dataCount < int(self.frameNum.text):
+                if self.dataCount % 1000 == 0:
+                    print(self.dataCount)
+                    print(int(self.frameNum.text))
+                    print("====")
                 self.dataCount += 1
                 self.send_data()
-                if self.dataCount >= int(self.frameNum.text):
-                    self.change_state()
+            else:
+                print("stop!!!")
+                asyncio.get_event_loop().call_soon(self.change_state)
         else:
             if self.tailCount < 3:
                 self.send_tail()
