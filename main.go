@@ -100,12 +100,12 @@ func main() {
 	go generate()
 	snrBuf := make([]byte, 1024, 1024)
 	for {
-		_, _, err := ebrRecv.ReadFrom(snrBuf)
+		len, _, err := ebrRecv.ReadFrom(snrBuf)
 		if err != nil {
 			log.Print(err)
 			continue
 		}
-		snr, err := strconv.ParseFloat(string(snrBuf), 64)
+		snr, err := strconv.ParseFloat(string(snrBuf[:len]), 64)
 		if err != nil {
 			log.Print(err)
 			continue
