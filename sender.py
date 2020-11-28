@@ -9,13 +9,12 @@ import datetime
 import time
 import threading
 import asyncio
+import datetime
 import socket
 
 packetLength = 491
 packetPrefix = 100
-hostname = "127.0.0.1"
-duration = 0.1
-username = "南海渔船"
+duration = 0.005
 
 class SendEmitter(flx.Component):
 
@@ -82,6 +81,8 @@ class Sender(flx.PyWidget):
                     self.startButton = flx.Button(text="开始")
                 flx.Widget(flex=1)
             flx.Widget(flex=1)
+        self.startTime = None
+        self.endTime = None
         self.headCount = 0
         self.tailCount = 0
         self.dataCount = 0
@@ -92,9 +93,13 @@ class Sender(flx.PyWidget):
         if self.startButton.text == "停止中...":
             return
         if self.startButton.text == "开始":
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.startTime = datetime.datetime.now()
+            if self.socket is None:
+                self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.startButton.set_text("提前结束")
         else:
+            self.endTime = datetime.datetime.now()
+            print(self.endTime - self.startTime)
             self.startButton.set_text("停止中...")
             def getReady():
                 self.tailCount = 0
@@ -112,14 +117,9 @@ class Sender(flx.PyWidget):
                 self.send_head()
                 self.headCount += 1
             elif self.dataCount < int(self.frameNum.text):
-                if self.dataCount % 1000 == 0:
-                    print(self.dataCount)
-                    print(int(self.frameNum.text))
-                    print("====")
                 self.dataCount += 1
                 self.send_data()
             else:
-                print("stop!!!")
                 asyncio.get_event_loop().call_soon(self.change_state)
         else:
             if self.tailCount < 3:
@@ -128,12 +128,15 @@ class Sender(flx.PyWidget):
     
     def send_head(self):
         # TODO add information in head
+        pass
         self.socket.sendto(headPacket, (self.ip.text, int(self.port.text)))
     
     def send_data(self):
+        pass
         self.socket.sendto(dataPacket, (self.ip.text, int(self.port.text)))
     
     def send_tail(self):
+        pass
         self.socket.sendto(tailPacket, (self.ip.text, int(self.port.text)))
     
 if __name__ == '__main__':

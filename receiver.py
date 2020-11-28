@@ -12,7 +12,7 @@ import asyncio
 import socket
 
 hostname = "127.0.0.1"
-freshDuration = 0.1
+freshDuration = 0.2
 
 
 class DrawEmitter(flx.Component):
@@ -50,9 +50,11 @@ class UDPReceiver:
 
 def howManyOne(data):
     result = 0
+    if data == 0:
+        return 0
     while data != 0:
         result += 1
-        data = data^(~(data-1))
+        data -= data&(~(data-1))
     return result
 
 class Receiver(flx.PyWidget):
@@ -119,7 +121,7 @@ class Receiver(flx.PyWidget):
         for b in data[-100:]:
             if b == 0xff:
                 tailOne += 1
-        if headZero < 10:
+        if headZero < 20:
             self.handleData(data)
         elif tailOne > 80:
             self.handleStop(data)
@@ -156,13 +158,13 @@ class Receiver(flx.PyWidget):
         if self.bitState["error"] == 0:
             self.error_bits_rate.set_text("0")
         else:
-            self.error_bits_rate.set_text(str(self.bitState["error"]/self.bitState["total"]))
+            self.error_bits_rate.set_text("{:.5e}".format((self.bitState["error"]/self.bitState["total"])))
         self.total_frame.set_text(str(self.frameState["total"]))
         self.error_frame.set_text(str(self.frameState["error"]))
         if self.frameState["error"] == 0:
             self.error_frame_rate.set_text("0")
         else:
-            self.error_frame_rate.set_text(str(self.frameState["error"]/self.frameState["total"]))
+            self.error_frame_rate.set_text("{:.5e}".format((self.frameState["error"]/self.frameState["total"])))
 
 if __name__ == '__main__':
     flx.App(Receiver, title="误码率测试接收端").launch("app")
