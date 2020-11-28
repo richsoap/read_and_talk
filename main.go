@@ -2,15 +2,11 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"log"
 	"math"
 	"math/rand"
 	"net"
-	"strconv"
 	"time"
-
-	"github.com/gonum/stat/combin"
 )
 
 var (
@@ -21,45 +17,55 @@ var (
 	mode      string
 	duration  int
 	packetNum int
-	ebr       float64
+	ebr       int
 )
 
 type manager struct {
 	errbitInfo  chan float64
-	dataInfo    chan chan byte
+	dataInfo    chan chan int
 	errbitJudge []float64
 }
 
 func newManager() *manager {
-	return &manager{
+	result := &manager{
 		errbitInfo:  make(chan float64),
-		dataInfo:    make(chan chan byte),
-		errbitJudge: []float64{1, 0, 0, 0},
+		dataInfo:    make(chan chan int),
+		errbitJudge: make([]float64, 491*8),
 	}
+	result.errbitJudge[0] = 1
+	return result
 }
 
 func (m *manager) work() {
-	bits := size * 8
+	bits := float64(size * 8)
 	for {
 		select {
 		case ebr := <-m.errbitInfo:
-			ebr *= 0.9
 			if ebr < 1e-8 {
 				m.errbitJudge[0] = 1
 				break
 			}
+			current := 0.0
 			for i := range m.errbitJudge {
-				m.errbitJudge[i] = float64(combin.Binomial(bits, i)) * math.Pow(ebr, float64(i)) * math.Pow(1-ebr, float64(bits-i))
-				if i != 0 {
-					m.errbitJudge[i] += m.errbitJudge[i-1]
+				if i == 0 {
+					current = math.Pow(1-ebr, bits)
+					m.errbitJudge[0] = current
+				} else {
+					current = current * ebr / (1 - ebr) * (bits - float64(i) + 1) / float64(i)
+					m.errbitJudge[i] = current + m.errbitJudge[i-1]
+				}
+				if m.errbitJudge[i] > 1 || (i != 0 && m.errbitJudge[i] == m.errbitJudge[i-1]) {
+					m.errbitJudge[i] = 1
+					break
 				}
 			}
 			m.errbitJudge[len(m.errbitJudge)-1] = 1
+			log.Printf("new ebr %v", ebr)
 		case fb := <-m.dataInfo:
 			dice := rand.Float64()
 			for i := range m.errbitJudge {
 				if dice < m.errbitJudge[i] {
-					fb <- (1 << i) - 1
+					fb <- i
 					break
 				}
 			}
@@ -75,7 +81,7 @@ func main() {
 	flag.StringVar(&dest, "dest", "127.0.0.1:4040", "Where send destination")
 	flag.IntVar(&duration, "duration", 1000, "duration between 2 packets(only use in sender)")
 	flag.IntVar(&packetNum, "packet", 20000, "packet number")
-	flag.Float64Var(&ebr, "ebr_value", 1e-5, "ebr(only use in set ebr)")
+	flag.IntVar(&ebr, "ebr_value", 2, "ebr mode(only use in set ebr)")
 	flag.Parse()
 	log.Printf("runing mode %v", mode)
 	switch mode {
@@ -97,9 +103,10 @@ func setEbr() {
 	if err != nil {
 		log.Fatalf("setebr %v", err)
 	}
-	out := fmt.Sprintf("%v", ebr)
-	log.Printf("ebr value %v", ebr)
-	conn.Write([]byte(out))
+	buf := make([]byte, 10, 10)
+	buf[0] = byte(ebr)
+	log.Printf("ebr mode %v", ebr)
+	conn.Write(buf)
 }
 
 func sender() {
@@ -224,11 +231,13 @@ func normal() {
 	go m.work()
 	buf := make([]byte, 1024, 1024)
 	sendBuf := make([]byte, size, size)
+	log.Printf("sendbuf %v", len(sendBuf))
 	for i := range sendBuf {
 		sendBuf[i] = 0xff
 	}
+	rand.Seed(time.Now().Unix())
 	generate := func() {
-		fb := make(chan byte)
+		fb := make(chan int)
 		defer close(fb)
 		for {
 			_, _, err := recv.ReadFrom(buf)
@@ -242,30 +251,45 @@ func normal() {
 					headZero++
 				}
 			}
-			if headZero > 50 {
-				recv.WriteTo(buf[:size], destAddress)
-				continue
-			}
 			m.dataInfo <- fb
-			mask := <-fb
-			sendBuf[30] = 0xff ^ mask
-			recv.WriteTo(sendBuf, destAddress)
+			bitNum := <-fb
+			indexs := make([]int, 0)
+			if headZero > 50 {
+				for i := 0; i < bitNum; i++ {
+					index := rand.Intn(size)
+					buf[index] = buf[index] ^ (1 << rand.Intn(8))
+				}
+				recv.WriteTo(buf[:size], destAddress)
+			} else {
+				for i := 0; i < bitNum; i++ {
+					index := rand.Intn(size)
+					indexs = append(indexs, index)
+					sendBuf[index] = sendBuf[index] ^ (1 << rand.Intn(8))
+				}
+				recv.WriteTo(sendBuf, destAddress)
+				for _, i := range indexs {
+					sendBuf[i] = 0xff
+				}
+			}
 		}
 	}
 	go generate()
 	snrBuf := make([]byte, 1024, 1024)
 	for {
-		len, _, err := ebrRecv.ReadFrom(snrBuf)
+		_, _, err := ebrRecv.ReadFrom(snrBuf)
 		if err != nil {
 			log.Print(err)
 			continue
 		}
-		snr, err := strconv.ParseFloat(string(snrBuf[:len]), 64)
-		log.Printf("read ebr %v", snr)
-		if err != nil {
-			log.Print(err)
-			continue
+		switch snrBuf[0] {
+		case 0:
+			m.errbitInfo <- 0
+		case 1:
+			m.errbitInfo <- 1e-6 * (rand.Float64() + 0.5/1.5) * 1.5 // [0.5, 2]
+		case 2:
+			m.errbitInfo <- 1e-4 * (rand.Float64() + 0.5/79.5) * 79.5 // [0.5, 80]
+		default:
+			log.Printf("unkonw mode")
 		}
-		m.errbitInfo <- snr
 	}
 }
