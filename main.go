@@ -193,7 +193,7 @@ func receiver() {
 		} else {
 			currentErrorbits := 0
 			for i := range buf {
-				currentErrorbits += countOne(buf[i] ^ 0xff)
+				currentErrorbits += countOne(0xff ^ buf[i])
 			}
 			errorBits += currentErrorbits
 			if currentErrorbits != 0 {
@@ -248,7 +248,7 @@ func normal() {
 			}
 			m.dataInfo <- fb
 			mask := <-fb
-			sendBuf[0] = 0xff ^ mask
+			sendBuf[30] = 0xff ^ mask
 			recv.WriteTo(sendBuf, destAddress)
 		}
 	}
