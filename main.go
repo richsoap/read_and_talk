@@ -44,7 +44,12 @@ func (m *manager) work() {
 			if ebr < 1e-8 {
 				m.errbitJudge[0] = 1
 				break
+			} else if ebr < 1e-5 {
+				m.errbitJudge = make([]float64, 3)
+			} else {
+				m.errbitJudge = make([]float64, 80)
 			}
+
 			current := 0.0
 			for i := range m.errbitJudge {
 				if i == 0 {
@@ -285,7 +290,7 @@ func normal() {
 		case 0:
 			m.errbitInfo <- 0
 		case 1:
-			m.errbitInfo <- 1e-6 * (rand.Float64() + 0.5/1.5) * 1.5 // [0.5, 2]
+			m.errbitInfo <- 1e-6 * 0.3 // [0.5, 2]
 		case 2:
 			m.errbitInfo <- 1e-4 * (rand.Float64() + 0.5/79.5) * 79.5 // [0.5, 80]
 		default:
