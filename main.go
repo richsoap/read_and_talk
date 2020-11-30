@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"io/ioutil"
 	"log"
 	"math"
 	"math/rand"
@@ -18,6 +19,8 @@ var (
 	duration  int
 	packetNum int
 	ebr       int
+	fac       float64
+	sendfile  string
 )
 
 type manager struct {
@@ -41,7 +44,8 @@ func (m *manager) work() {
 	for {
 		select {
 		case ebr := <-m.errbitInfo:
-			if ebr < 1e-8 {
+			ebr *= fac
+			if ebr < 1e-9 {
 				m.errbitJudge[0] = 1
 				break
 			} else if ebr < 1e-5 {
@@ -79,11 +83,13 @@ func (m *manager) work() {
 }
 
 func main() {
+	flag.Float64Var(&fac, "fac", 0.3, "fac")
 	flag.StringVar(&mode, "mode", "normal", "normal/sender/receiver/setebr")
 	flag.IntVar(&size, "size", 491, "Bytes in a packet")
 	flag.StringVar(&ebrbind, "ebr", "127.0.0.1:4000", "Ebr information destination")
 	flag.StringVar(&databind, "data", "127.0.0.1:4001", "Data information destination")
 	flag.StringVar(&dest, "dest", "127.0.0.1:4040", "Where send destination")
+	flag.StringVar(&sendfile, "file", "target.txt", "data with no noise")
 	flag.IntVar(&duration, "duration", 1000, "duration between 2 packets(only use in sender)")
 	flag.IntVar(&packetNum, "packet", 20000, "packet number")
 	flag.IntVar(&ebr, "ebr_value", 2, "ebr mode(only use in set ebr)")
@@ -234,16 +240,35 @@ func normal() {
 	log.Printf("send data to %v", dest)
 	m := newManager()
 	go m.work()
-	buf := make([]byte, 1024, 1024)
-	sendBuf := make([]byte, size, size)
-	log.Printf("sendbuf %v", len(sendBuf))
-	for i := range sendBuf {
-		sendBuf[i] = 0xff
-	}
 	rand.Seed(time.Now().Unix())
 	generate := func() {
 		fb := make(chan int)
 		defer close(fb)
+		wantedChars, err := ioutil.ReadFile(sendfile)
+		wantedData := make([]byte, size, size)
+		sendBuf := make([]byte, size, size)
+		buf := make([]byte, 1024, 1024)
+		if err != nil {
+			log.Fatal(err)
+		}
+		for i := range wantedChars {
+			var curr byte
+			if wantedChars[i] >= '0' && wantedChars[i] <= '9' {
+				curr = wantedChars[i] - '0'
+			} else if wantedChars[i] >= 'a' && wantedChars[i] <= 'z' {
+				curr = wantedChars[i] - 'a' + 10
+			} else {
+				curr = wantedChars[i] - 'A' + 10
+			}
+			if i%2 == 0 {
+				wantedData[i/2] = curr
+			} else {
+				wantedData[i/2] |= curr << 4
+			}
+		}
+		for i := range wantedData {
+			sendBuf[i] = wantedData[i]
+		}
 		for {
 			_, _, err := recv.ReadFrom(buf)
 			if err != nil {
@@ -251,19 +276,18 @@ func normal() {
 				continue
 			}
 			headZero := 0
-			for i := 0; i < 100; i++ {
+			for i := 0; i < size; i++ {
 				if buf[i] == 0 {
 					headZero++
 				}
+			}
+			if headZero == size {
+				continue
 			}
 			m.dataInfo <- fb
 			bitNum := <-fb
 			indexs := make([]int, 0)
 			if headZero > 50 {
-				for i := 0; i < bitNum; i++ {
-					index := rand.Intn(size)
-					buf[index] = buf[index] ^ (1 << rand.Intn(8))
-				}
 				recv.WriteTo(buf[:size], destAddress)
 			} else {
 				for i := 0; i < bitNum; i++ {
@@ -273,7 +297,7 @@ func normal() {
 				}
 				recv.WriteTo(sendBuf, destAddress)
 				for _, i := range indexs {
-					sendBuf[i] = 0xff
+					sendBuf[i] = wantedData[i]
 				}
 			}
 		}
@@ -290,7 +314,7 @@ func normal() {
 		case 0:
 			m.errbitInfo <- 0
 		case 1:
-			m.errbitInfo <- 1e-6 * 0.3 // [0.5, 2]
+			m.errbitInfo <- 1e-6 * 0.7 // [0.5, 2]
 		case 2:
 			m.errbitInfo <- 1e-4 * (rand.Float64() + 0.5/79.5) * 79.5 // [0.5, 80]
 		default:
